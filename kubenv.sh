@@ -1,17 +1,5 @@
 #!/bin/bash
 
-# Read environment aliases
-# Allows for a file to contain a set of aliases for each path
-# Example line: izzi-int=env/izzi-int/izzi-int-sdp-conf
-declare -A kubeconfmap
-if [ -f config.properties ]; then
- readarray -t lines < "config.properties"
- for line in "${lines[@]}"; do
-    key=${line%%=*}
-    value=${line#*=}
-    kubeconfmap[$key]=$value
- done
-fi
 
 kill_child_processes() {
     isTopmost=$1
@@ -29,15 +17,8 @@ kill_child_processes() {
 # Ctrl-C trap. Catches INT signal
 trap "kill_child_processes 1 $$; exit 0" INT
 
-path_to_kubeconfig=$1
-
-# If the kubeconfig name is an alias, get the value from the map
-if [[ ! -z "${kubeconfmap[$1]}" ]]; then
-  path_to_kubeconfig="${kubeconfmap[$1]}"
-fi
-
-echo $path_to_kubeconfig
-export KUBECONFIG=$path_to_kubeconfig
+echo $1
+export KUBECONFIG=$1
 
 
 usedNamespace=$(kubectl config view | grep namespace:)
@@ -51,23 +32,17 @@ echo "====================  BEGIN PORTFORWARDS ============================"
 
 # Iterate the string variable using for loop
 for val in "${@:2}"; do
-  while IFS=: read podPrefix desiredPort port kconfig; do
 
-  # Override KUBECONFIG with 4th parameter (kconfig) if it set. (useful for using infra-config for solr)
-  if [[ ! -z $kconfig ]]; then
-   path_to_kubeconfig=$kconfig
-   # If set in kubeconfmap, interpret as alias and use the value from map as the path
-   if [[ ! -z "${kubeconfmap[$kconfig]}" ]]; then
-     path_to_kubeconfig="${kubeconfmap[$kconfig]}"
-   fi
-  fi
+  podPrefix=$(echo $val | awk 'BEGIN{FS=":"} {print $1}')
+  desiredPort=$(echo $val | awk 'BEGIN{FS=":"} {print $2}')
 
-  pod=$(KUBECONFIG=$path_to_kubeconfig kubectl get pods | grep $podPrefix  | head -n 1 | awk '{print $1}')
 
-  if [ -z "${port}" ]
-  then
-   port=$(KUBECONFIG=$path_to_kubeconfig kubectl get pod $pod --template='{{(index (index .spec.containers 0).ports 0).containerPort}}{{"\n"}}')
-  fi
+  pod=$(kubectl get pods | grep $podPrefix  | head -n 1 | awk '{print $1}')
+
+
+  port=$(kubectl get pod $pod --template='{{(index (index .spec.containers 0).ports 0).containerPort}}{{"\n"}}')
+
+
 
   # kills any process listening to desiredPort
 
@@ -78,10 +53,10 @@ for val in "${@:2}"; do
      kill $processOnPort
   fi
 
+
   echo "====> POD $pod  listening on $desiredPort  (launched command: kubectl port-forward $pod $desiredPort:$port)"
 
-  KUBECONFIG=$path_to_kubeconfig kubectl port-forward $pod $desiredPort:$port &
-  done <<< "$val"
+  kubectl port-forward $pod $desiredPort:$port &
 done
 echo ""
 echo "==================== END PORTFORWARDS ============================"
